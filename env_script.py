@@ -1,98 +1,71 @@
 import bpy
-import math
 import numpy as np
 
-#clear any previously generated corkscrew orbit curves ===
-for obj in bpy.data.objects:
-    if obj.name.startswith("CorkscrewOrbit"):
-        bpy.data.objects.remove(obj, do_unlink=True)
+#parameters for the corkscrew orbit path
+radius = 500  #changed scaling for visualization (change later to scale correctly)
+inclination = 45 * np.pi / 180  #inclination in radians (45 degrees)
+h = 200  #altitude --> affects the calculation of orbital period
+T = 2 * np.pi * np.sqrt((6378.137 + h)**3 / 398600.44)  #orbital period
+om = 2 * np.pi / T  #angular velocity
+t = np.linspace(0, 2 * T, 1000)  #time samples to create a smooth path
 
-#define scaled Earth radius and orbit altitude ===
-earth_radius = 6371 / 1000  # earth's radius scaled down by 1/1000 (6.371 BU)
-orbit_altitude = 200 / 1000  # orbit altitude scaled down (0.2 BU)
-total_orbit_radius = earth_radius + orbit_altitude  # total orbit radius
+#calculate the corkscrew path trajectory points
+x_t = radius * np.cos(om * t)  # circular motion in the x-direction
+y_t = radius * np.sin(inclination) * np.sin(om * t)  #inclined circular motion in y
+z_t = np.linspace(-radius, radius, len(t))  #vertical spiral effect for corkscrew
 
-#orbit parameters
-inclination = 45 * np.pi / 180  
-T = 2 * np.pi * np.sqrt((total_orbit_radius ** 3) / 398600.44)  
-omega = 2 * np.pi / T  #angular velocity
-
-#generate trajectory points for the corkscrew orbit
-num_points = 1000  
-t = np.linspace(0, 2 * T, num_points)  
-
-#calculate trajectory points for the corkscrew path
-x_t = total_orbit_radius * np.cos(omega * t)
-y_t = total_orbit_radius * np.sin(inclination) * np.sin(omega * t)
-z_t = np.linspace(orbit_altitude, orbit_altitude + 0.2, num_points)  # Vertical corkscrew effect
-
-#create curved object to represent the corkscrew orbit
-curve_data = bpy.data.curves.new('CorkscrewOrbit', type='CURVE')
+#create the corkscrew path in Blender
+curve_data = bpy.data.curves.new(name='CorkscrewOrbit', type='CURVE')
 curve_data.dimensions = '3D'
-spline = curve_data.splines.new('POLY')
-spline.points.add(num_points - 1)
+polyline = curve_data.splines.new('POLY')
 
-# assign trajectory points to the spline
+#set the number of points for the curve
+polyline.points.add(len(x_t) - 1)
+
+#add each calculated point to the polyline
 for i, (x, y, z) in enumerate(zip(x_t, y_t, z_t)):
-    spline.points[i].co = (x, y, z, 1)  # Homogeneous coordinates
+    polyline.points[i].co = (x, y, z, 1)  
 
-#create and link the corkscrew path
-corkscrew_path = bpy.data.objects.new('CorkscrewOrbit', curve_data)
+#create a new object with the curve data
+orbit_path = bpy.data.objects.new('CorkscrewOrbitObject', curve_data)
+bpy.context.collection.objects.link(orbit_path)
 
-if 'Corkscrew' not in bpy.data.collections:
-    corkscrew_collection = bpy.data.collections.new('Corkscrew')
-    bpy.context.scene.collection.children.link(corkscrew_collection)
-else:
-    corkscrew_collection = bpy.data.collections['Corkscrew']
+print("Corkscrew orbit path created.")
 
-corkscrew_collection.objects.link(corkscrew_path)
+#get references to the corkscrew path, Surface (Earth), and satellite objects
+orbit_path = bpy.data.objects['CorkscrewOrbitObject.001']  #corkscrew orbit path
+surface = bpy.data.objects['Surface']  #earth model, with Atmo and Clouds parented
+satellite = bpy.data.objects['Satellite']  #satellite model
 
-#select and scale the satellite ===
-satellite = bpy.data.objects['Satellite']
-satellite.scale = (0.015, 0.003, 0.003)  # Satellite scaled by 1/1000
-bpy.ops.object.transform_apply(scale=True)  # Apply scaling
+#set the animation duration for the corkscrew orbit path
+#esure the duration matches the orbital period
+T = orbit_path.data.path_duration  
 
-#add a follow path constraint to the satellite
-constraint = satellite.constraints.new(type='FOLLOW_PATH')
-constraint.target = corkscrew_path  
-constraint.use_curve_follow = True  
+#attach Earth (Surface) to the path
+#add a Follow Path constraint to Surface
+surface_constraint = surface.constraints.new(type='FOLLOW_PATH')
+surface_constraint.target = orbit_path
+surface_constraint.use_curve_follow = True
 
-#set the satellite's initial position
-satellite.location = (x_t[0], y_t[0], z_t[0])
+#set keyframes for Surface to move along the path
+surface_constraint.offset_factor = 0  #start at the beginning of the path
+surface.keyframe_insert(data_path='constraints["Follow Path"].offset_factor', frame=1)
+surface_constraint.offset_factor = 1  #move to the end of the path
+surface.keyframe_insert(data_path='constraints["Follow Path"].offset_factor', frame=int(T))
 
-#set the path animation duration
-corkscrew_path.data.path_duration = int(T)
+print("Earth is following the corkscrew path.")
 
-#add keyframes for animation
-constraint.offset_factor = 0  # start of path
+#attach Satellite to the path
+#add a Follow Path constraint to the Satellite
+satellite_constraint = satellite.constraints.new(type='FOLLOW_PATH')
+satellite_constraint.target = orbit_path
+satellite_constraint.use_curve_follow = True
+
+#set keyframes for Satellite to move along the path
+satellite_constraint.offset_factor = 0  #start at the beginning of the path
 satellite.keyframe_insert(data_path='constraints["Follow Path"].offset_factor', frame=1)
-constraint.offset_factor = 1  # end of path
+satellite_constraint.offset_factor = 1  #move to the end of the path
 satellite.keyframe_insert(data_path='constraints["Follow Path"].offset_factor', frame=int(T))
 
-#scale and center earth layers (Atmo, Clouds, Surface)
-for layer_name in ['Atmo', 'Clouds', 'Surface']:
-    if layer_name in bpy.data.objects:
-        layer = bpy.data.objects[layer_name]
-        layer.scale = (earth_radius, earth_radius, earth_radius) 
-        layer.location = (0, 0, 0)n
-        bpy.ops.object.transform_apply(scale=True)  # apply scaling
+print("Satellite is following the corkscrew path.")
 
-#add sunlight
-if 'Sun' not in bpy.data.objects:
-    bpy.ops.object.light_add(type='SUN', location=(0, 0, 10000))  # Position the Sun
-    sun = bpy.context.active_object
-    sun.name = 'Sun'
-    print("Sunlight added.")
-
-sun = bpy.data.objects['Sun']
-sun.data.energy = 100  
-sun.data.angle = 0.5  
-sun.scale = (1000, 1000, 1000) 
-
-# add world lighting
-world = bpy.data.worlds['World']
-world.use_nodes = True  # Enable node-based world lighting
-bg_node = world.node_tree.nodes['Background']
-bg_node.inputs[1].default_value = 2.5  # Boost ambient light
-
-print("Sat & Earth layers scaled --> lighting added --> ready for rendering")
